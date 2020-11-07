@@ -2,7 +2,7 @@
 //
 
 #include "ffmpegThumbnail.h"
-
+#include <string>
 extern "C" {
 	#include <libavcodec/avcodec.h>
 	#include <libavformat/avformat.h>
@@ -18,10 +18,10 @@ using namespace std;
 static void save_gray_frame(unsigned char* buf, int wrap, int xsize, int ysize, char* filename);
 static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFrame* pFrame);
 static void logging(const char* fmt, ...);
-
+static int saveJPEG(AVCodecContext* pCodecConetext,AVFrame* pFrame, const char* filename);
 int main()
 {
-	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test3.mkv";
+	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test3.mp4";
 	
 	// Read media file and read the header information from container format
 	AVFormatContext* pFormatContext = avformat_alloc_context();
@@ -143,9 +143,9 @@ static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFra
 		if (response >= 0) {
 			
 			char frame_filename[1024];
-			snprintf(frame_filename, sizeof(frame_filename), "./%s-%d.pgm", "frame", pCodecContext->frame_number);
+			snprintf(frame_filename, sizeof(frame_filename), "./%s-%d.jpg", "frame", pCodecContext->frame_number);
 			logging("saved file name: %s", frame_filename);
-			save_gray_frame(pFrame->data[0], pFrame->linesize[0], pFrame->width, pFrame->height, frame_filename);
+			saveJPEG(pCodecContext, pFrame, frame_filename);
 		}
 		return 0;
 	}
@@ -175,3 +175,106 @@ static void save_gray_frame(unsigned char* buf, int wrap, int xsize, int ysize, 
 	fclose(f);
 }
 
+static int saveJPEG(AVCodecContext* pCodecConetext,AVFrame* pFrame, const char* filename) {
+	int width = pFrame->width;
+	int height = pFrame->height;
+	AVCodecContext* pCodeCtx = NULL;
+
+
+	AVFormatContext* pFormatCtx = avformat_alloc_context();
+	// 设置输出文件格式
+	pFormatCtx->oformat = av_guess_format("mjpeg", NULL, NULL);
+
+	// 创建并初始化输出AVIOContext
+	if (avio_open(&pFormatCtx->pb, filename, AVIO_FLAG_READ_WRITE) < 0) {
+		printf("Couldn't open output file.");
+		return -1;
+	}
+
+	// 构建一个新stream
+	AVStream* pAVStream = avformat_new_stream(pFormatCtx, 0);
+	if (pAVStream == NULL) {
+		return -1;
+	}
+
+	AVCodecParameters* parameters = pAVStream->codecpar;
+	parameters->codec_id = pFormatCtx->oformat->video_codec;
+	parameters->codec_type = AVMEDIA_TYPE_VIDEO;
+	parameters->format = AV_PIX_FMT_YUVJ420P;
+	parameters->width = pFrame->width;
+	parameters->height = pFrame->height;
+
+	AVCodec* pCodec = avcodec_find_encoder(pAVStream->codecpar->codec_id);
+
+	if (!pCodec) {
+		printf("Could not find encoder\n");
+		return -1;
+	}
+
+	pCodeCtx = avcodec_alloc_context3(pCodec);
+	if (!pCodeCtx) {
+		fprintf(stderr, "Could not allocate video codec context\n");
+		exit(1);
+	}
+
+	if ((avcodec_parameters_to_context(pCodeCtx, pAVStream->codecpar)) < 0) {
+		fprintf(stderr, "Failed to copy %s codec parameters to decoder context\n",
+			av_get_media_type_string(AVMEDIA_TYPE_VIDEO));
+		return -1;
+	}
+
+	pCodeCtx->time_base.num = 1;
+	pCodeCtx->time_base.den = 25;
+
+	if (avcodec_open2(pCodeCtx, pCodec, NULL) < 0) {
+		printf("Could not open codec.");
+		return -1;
+	}
+
+	int ret = avformat_write_header(pFormatCtx, NULL);
+	if (ret < 0) {
+		printf("write_header fail\n");
+		return -1;
+	}
+
+	int y_size = width * height;
+
+	//Encode
+	// 给AVPacket分配足够大的空间
+	AVPacket pkt;
+	av_new_packet(&pkt, y_size * 3);
+
+	// 编码数据
+	ret = avcodec_send_frame(pCodeCtx, pFrame);
+	if (ret < 0) {
+		printf("Could not avcodec_send_frame.");
+		return -1;
+	}
+
+	// 得到编码后数据
+	ret = avcodec_receive_packet(pCodeCtx, &pkt);
+	if (ret < 0) {
+		printf("Could not avcodec_receive_packet");
+		return -1;
+	}
+
+	ret = av_write_frame(pFormatCtx, &pkt);
+
+	if (ret < 0) {
+		printf("Could not av_write_frame");
+		return -1;
+	}
+
+	av_packet_unref(&pkt);
+
+	//Write Trailer
+	av_write_trailer(pFormatCtx);
+
+
+	avcodec_close(pCodeCtx);
+	avio_close(pFormatCtx->pb);
+	avformat_free_context(pFormatCtx);
+
+	return 0;
+
+}
