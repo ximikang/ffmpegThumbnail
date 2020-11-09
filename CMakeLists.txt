@@ -2,10 +2,11 @@
 # 项目特定的逻辑。
 #
 cmake_minimum_required (VERSION 3.8)
-
+set(OpenCV_DIR "E:/opencv/build")
+FIND_PACKAGE( OpenCV REQUIRED )   
 # 头文件
 include_directories("include")
-
+include_directories(${OpenCV_INCLUDE_DIRS})
 # 库文件
 link_directories("lib")
 
@@ -24,4 +25,5 @@ target_link_libraries(
 	swresample	#音视频编解码格式预设
 	swscale		#原始视频格式转换库
 )
+target_link_libraries(ffmpegThumbnail ${OpenCV_LIBS})
 # TODO: 如有需要，请添加测试并安装目标。

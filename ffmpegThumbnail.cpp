@@ -3,9 +3,12 @@
 
 #include "ffmpegThumbnail.h"
 #include <string>
+#include <opencv2/opencv.hpp>
 extern "C" {
 	#include <libavcodec/avcodec.h>
 	#include <libavformat/avformat.h>
+	#include <libswscale/swscale.h>
+	#include <libavutil/pixfmt.h>
 	#include <stdio.h>
 	#include <stdarg.h>
 	#include <stdlib.h>
@@ -19,9 +22,10 @@ static void save_gray_frame(unsigned char* buf, int wrap, int xsize, int ysize, 
 static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFrame* pFrame);
 static void logging(const char* fmt, ...);
 static int saveJPEG(AVCodecContext* pCodecConetext,AVFrame* pFrame, const char* filename);
-int main()
+static int Frame2rgbFrame(AVFrame* pFrame, AVFrame* pRGBFrame, AVPixelFormat pPixFormat);
+int main(int arg, char** argv)
 {
-	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test3.mp4";
+	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test.mp4";
 	
 	// Read media file and read the header information from container format
 	AVFormatContext* pFormatContext = avformat_alloc_context();
@@ -145,6 +149,8 @@ static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFra
 			char frame_filename[1024];
 			snprintf(frame_filename, sizeof(frame_filename), "./%s-%d.jpg", "frame", pCodecContext->frame_number);
 			logging("saved file name: %s", frame_filename);
+			AVFrame* prgbFrame = av_frame_alloc();
+			Frame2rgbFrame(pFrame, prgbFrame,pCodecContext->pix_fmt);
 			saveJPEG(pCodecContext, pFrame, frame_filename);
 		}
 		return 0;
@@ -277,4 +283,27 @@ static int saveJPEG(AVCodecContext* pCodecConetext,AVFrame* pFrame, const char* 
 
 	return 0;
 
+}
+
+static int Frame2rgbFrame(AVFrame* pFrame, AVFrame* pRGBFrame, AVPixelFormat pPixFormat)
+{
+	// fill picture
+	uint8_t* out_buffer = new uint8_t[avpicture_get_size(AV_PIX_FMT_RGB24, pFrame->width, pFrame->height)];
+	avpicture_fill((AVPicture*)pRGBFrame, out_buffer, AV_PIX_FMT_RGB24, pFrame->width, pFrame->height);
+	SwsContext* rgbSwsContext = sws_getContext(pFrame->width, pFrame->height, pPixFormat, pFrame->width, pFrame->height, AV_PIX_FMT_BGR24,SWS_BICUBIC, NULL, NULL, NULL);
+	if (!rgbSwsContext) {
+		logging("Error could not create frame to rgbframe sws context");
+		return -1;
+	}
+	if (sws_scale(rgbSwsContext, pFrame->data, pFrame->linesize, 0, pFrame->height, pRGBFrame->data, pRGBFrame->linesize) < 0) {
+		logging("Error could not sws to rgb frame");
+		return -1;
+	}
+	// show rgb image
+	cv::Mat  image(cv::Size(pFrame->width, pFrame->height), CV_8UC3);
+	image.data = (uchar*)pRGBFrame->data[0];
+	cv::imshow("test", image);
+	cv::waitKey(0);
+
+	return 0;
 }
