@@ -1,31 +1,8 @@
-﻿// ffmpegThumbnail.cpp: 定义应用程序的入口点。
-//
+﻿#include "ffmpegThumbnail.h"
 
-#include "ffmpegThumbnail.h"
-#include <string>
-#include <opencv2/opencv.hpp>
-extern "C" {
-	#include <libavcodec/avcodec.h>
-	#include <libavformat/avformat.h>
-	#include <libswscale/swscale.h>
-	#include <libavutil/pixfmt.h>
-	#include <stdio.h>
-	#include <stdarg.h>
-	#include <stdlib.h>
-	#include <string.h>
-	#include <inttypes.h>
-}
-
-using namespace std;
-
-static void save_gray_frame(unsigned char* buf, int wrap, int xsize, int ysize, char* filename);
-static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFrame* pFrame);
-static void logging(const char* fmt, ...);
-static int saveJPEG(AVCodecContext* pCodecConetext,AVFrame* pFrame, const char* filename);
-static int Frame2rgbFrame(AVFrame* pFrame, AVFrame* pRGBFrame, AVPixelFormat pPixFormat);
 int main(int arg, char** argv)
 {
-	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test.mp4";
+	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test.mkv";
 	
 	// Read media file and read the header information from container format
 	AVFormatContext* pFormatContext = avformat_alloc_context();
@@ -97,25 +74,32 @@ int main(int arg, char** argv)
 	}
 
 	int response = 0;
-	int sum_count = 5;
+	int rowNums = 4;
+	int colNums = 5;
+	int sum_count = rowNums * colNums;
 	//跳转的间隔 ms
 	int64_t time_step = video_duration / sum_count / 1000;
+	vector<cv::Mat> vImage;
+	
 
-	for (int i = 0; i < sum_count+1; ++i) {
-		// 每次读取相同时间间隔的一帧并保存
+	for (int i = 0; i < sum_count ; ++i) {
+		cv::Mat tempImage;
+		// 每次读取相同时间间隔的图像并存入vImage中
 		while (av_read_frame(pFormatContext, pPacket) >= 0) {
 			if (pPacket->stream_index == video_stream_index) {
-				response = decode_packet(pPacket, pCodecContext, pFrame);
+				response = decode_packet_2mat(pPacket, pCodecContext, pFrame, tempImage);// 返回
 			}
-			if (response == 0) 
+			if (response == 0)// 成功读取一帧
 				break;
 			if (response < 0)
 				continue;
 		}
+		vImage.push_back(tempImage);
 		// 跳转视频
 		av_seek_frame(pFormatContext, -1, ((double)time_step / (double)1000)* AV_TIME_BASE*(double)(i+1) + (double)pFormatContext->start_time, AVSEEK_FLAG_BACKWARD);
 	}
 
+	cv::Mat thumbnail = makeThumbnail(vImage, rowNums, colNums);
 	// free memory
 	avformat_close_input(&pFormatContext);
 	av_packet_free(&pPacket);
@@ -124,7 +108,7 @@ int main(int arg, char** argv)
 	return 0;
 }
 
-static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFrame* pFrame) {
+static int decode_packet_2mat(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFrame* pFrame, cv::Mat& image) {
 	int response = avcodec_send_packet(pCodecContext, pPacket);
 
 	if (response < 0) {
@@ -145,14 +129,8 @@ static int decode_packet(AVPacket* pPacket, AVCodecContext* pCodecContext, AVFra
 		}
 
 		if (response >= 0) {
-			
-			char frame_filename[1024];
-			snprintf(frame_filename, sizeof(frame_filename), "./%s-%d.jpg", "frame", pCodecContext->frame_number);
-			logging("saved file name: %s", frame_filename);
-			AVFrame* prgbFrame = av_frame_alloc();
-			Frame2rgbFrame(pFrame, prgbFrame,pCodecContext->pix_fmt);
-			saveJPEG(pCodecContext, pFrame, frame_filename);
-		}
+			image = frame2Mat(pFrame, pCodecContext->pix_fmt);
+		} 
 		return 0;
 	}
 }
@@ -285,25 +263,53 @@ static int saveJPEG(AVCodecContext* pCodecConetext,AVFrame* pFrame, const char* 
 
 }
 
-static int Frame2rgbFrame(AVFrame* pFrame, AVFrame* pRGBFrame, AVPixelFormat pPixFormat)
+cv::Mat frame2Mat(AVFrame* pFrame, AVPixelFormat pPixFormat)
 {
-	// fill picture
-	uint8_t* out_buffer = new uint8_t[avpicture_get_size(AV_PIX_FMT_RGB24, pFrame->width, pFrame->height)];
-	avpicture_fill((AVPicture*)pRGBFrame, out_buffer, AV_PIX_FMT_RGB24, pFrame->width, pFrame->height);
+	// image init
+	AVFrame* pRGBFrame = av_frame_alloc();
+	uint8_t* out_buffer = new uint8_t[avpicture_get_size(AV_PIX_FMT_BGR24, pFrame->width, pFrame->height)];
+	avpicture_fill((AVPicture*)pRGBFrame, out_buffer, AV_PIX_FMT_BGR24, pFrame->width, pFrame->height);
 	SwsContext* rgbSwsContext = sws_getContext(pFrame->width, pFrame->height, pPixFormat, pFrame->width, pFrame->height, AV_PIX_FMT_BGR24,SWS_BICUBIC, NULL, NULL, NULL);
 	if (!rgbSwsContext) {
 		logging("Error could not create frame to rgbframe sws context");
-		return -1;
+		exit(-1);
 	}
 	if (sws_scale(rgbSwsContext, pFrame->data, pFrame->linesize, 0, pFrame->height, pRGBFrame->data, pRGBFrame->linesize) < 0) {
 		logging("Error could not sws to rgb frame");
-		return -1;
+		exit(-1);
 	}
-	// show rgb image
-	cv::Mat  image(cv::Size(pFrame->width, pFrame->height), CV_8UC3);
-	image.data = (uchar*)pRGBFrame->data[0];
-	cv::imshow("test", image);
-	cv::waitKey(0);
 
-	return 0;
+	cv::Mat mRGB(cv::Size(pFrame->width, pFrame->height), CV_8UC3);
+	mRGB.data = (uchar*)pRGBFrame->data[0];//注意不能写为：(uchar*)pFrameBGR->data
+
+	av_free(pRGBFrame);
+	sws_freeContext(rgbSwsContext);
+	return mRGB;
+}
+
+cv::Mat makeThumbnail(vector<cv::Mat> vImage, const unsigned int rowNums, const unsigned int colNums)
+{
+	// 判断图片时候满足条件
+	if (vImage.size() != rowNums * colNums) {
+		logging("Error image size not equal input size");
+		logging("vImage length: %d, rowNums: %d, col number: %d", vImage.size(), rowNums, colNums);
+		exit(-1);
+	}
+	int interval = 100;
+	int height = vImage[0].size().height * rowNums + interval * (rowNums + 1);
+	int width = vImage[0].size().width * colNums + interval * (colNums + 1);
+	logging("thumbnail size: %d * %d", height, width);
+	cv::Mat thumbnail(cv::Size(width, height), CV_8UC3);
+	thumbnail.setTo(255);
+
+	// 进行填充
+	for (int i = 0; i < rowNums; ++i) {
+		for (int j = 0; j < colNums; ++j) {
+			int no = i * rowNums + j;
+			int widthOffset = (vImage[0].size().width + interval) * j;
+			int heightOffset = (vImage[0].size().height + interval) * i;
+			vImage[no].copyTo(thumbnail(cv::Rect(widthOffset, heightOffset, vImage[0].size().width, vImage[0].size().height)));
+		}
+	}
+	return thumbnail;
 }
