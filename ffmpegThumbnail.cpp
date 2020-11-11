@@ -1,9 +1,36 @@
 ﻿#include "ffmpegThumbnail.h"
+#include "cmdline.h"
+#include <filesystem>
 
+using namespace std::filesystem;
 int main(int arg, char** argv)
 {
-	char* filename = "C:/Users/ximik/Source/Repos/ffmpegThumbnail/test.mkv";
-	
+	// 参数处理
+	cmdline::parser a;
+
+	a.add<string>("input", 'i', "input file", true, "");
+	a.add<int>("rows", 'r', "rows number", false, 3);
+	a.add<int>("cols", 'c', "cols number", false, 3);
+	a.parse_check(arg, argv);
+
+	int rowNums = a.get<int>("rows");
+	int colNums = a.get<int>("cols");
+	string filePath = a.get<string>("input");
+
+	if (filePath == "") {
+		cerr << "not input file" << endl;
+		exit(-1);
+	}
+
+	path inputFilePath(filePath);
+	path thumbnailPath(inputFilePath.parent_path().append("thumbnail.jpg"));
+
+	cout << "-----------------------------------------------------" << endl;
+	cout << "input file:\t" << inputFilePath << endl;
+	cout << "ouput thumbnail file:\t" <<thumbnailPath << endl;
+	cout << "size:\t" << rowNums << "*" << colNums << endl;
+	cout << "-----------------------------------------------------" << endl;
+
 	// Read media file and read the header information from container format
 	AVFormatContext* pFormatContext = avformat_alloc_context();
 	if (!pFormatContext) {
@@ -11,7 +38,7 @@ int main(int arg, char** argv)
 		return -1;
 	}
 	
-	if (avformat_open_input(&pFormatContext, filename, NULL, NULL) != 0) {
+	if (avformat_open_input(&pFormatContext, inputFilePath.string().c_str(), NULL, NULL) != 0) {
 		logging("ERROR could not open media file");
 	}
 	
@@ -74,8 +101,6 @@ int main(int arg, char** argv)
 	}
 
 	int response = 0;
-	int rowNums = 4;
-	int colNums = 5;
 	int sum_count = rowNums * colNums;
 	//跳转的间隔 ms
 	int64_t time_step = video_duration / sum_count / 1000;
@@ -100,11 +125,14 @@ int main(int arg, char** argv)
 	}
 
 	cv::Mat thumbnail = makeThumbnail(vImage, rowNums, colNums);
+	//save thumbnail
+	cv::imwrite(thumbnailPath.string().c_str(), thumbnail);
 	// free memory
 	avformat_close_input(&pFormatContext);
 	av_packet_free(&pPacket);
 	av_frame_free(&pFrame);
 	avcodec_free_context(&pCodecContext);
+	system("Pause");
 	return 0;
 }
 
