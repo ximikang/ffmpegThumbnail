@@ -2,7 +2,6 @@
 # 项目特定的逻辑。
 #
 cmake_minimum_required (VERSION 3.8)
-set(OpenCV_DIR "E:/opencv/build")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
